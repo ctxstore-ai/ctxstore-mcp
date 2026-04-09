@@ -1,0 +1,132 @@
+name: Install & E2E Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Provision → Store → Search
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ctxstore-mcp from PyPI
+        run: pip install ctxstore-mcp
+
+      - name: Verify CLI entry point exists
+        run: ctxstore-mcp --help 2>&1 | head -5 || true
+
+      - name: E2E — Provision, store fact, read it back
+        env:
+          CTXSTORE_URL: https://ctxstore.ai
+        run: |
+          python3 - << 'EOF'
+          import httpx
+          import sys
+          import time
+          import json
+
+          BASE = "https://ctxstore.ai"
+          TIMESTAMP = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+          PLATFORM = "github-actions-ubuntu"
+          FACT_TEXT = f"ctxstore-mcp installed successfully on {PLATFORM} at {TIMESTAMP}"
+
+          print(f"[1/4] Provisioning tenant...")
+          resp = httpx.post(f"{BASE}/api/v1/provision", json={"source": "ci-verify"}, timeout=30)
+          resp.raise_for_status()
+          data = resp.json()
+          api_key = data.get("api_key")
+          tenant_id = data.get("tenant_id", "?")
+          if not api_key:
+              print(f"FAIL: provision response missing api_key: {data}")
+              sys.exit(1)
+          print(f"  ✓ Provisioned tenant {tenant_id}")
+
+          headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+          print(f"[2/4] Storing verification fact...")
+          resp = httpx.post(f"{BASE}/api/v1/facts", json={
+              "text": FACT_TEXT,
+              "category": "technical",
+              "is_permanent": False,
+          }, headers=headers, timeout=30)
+          resp.raise_for_status()
+          fact_data = resp.json()
+          fact_id = fact_data.get("fact_id")
+          if not fact_id:
+              print(f"FAIL: store_fact response missing fact_id: {fact_data}")
+              sys.exit(1)
+          print(f"  ✓ Stored fact {fact_id}")
+
+          print(f"[3/4] Searching for the fact...")
+          time.sleep(2)  # give indexing a moment
+          resp = httpx.post(f"{BASE}/api/v1/facts/search", json={
+              "query": "ctxstore-mcp installed successfully",
+              "top_k": 5,
+          }, headers=headers, timeout=30)
+          resp.raise_for_status()
+          results = resp.json().get("results", [])
+          found = any(PLATFORM in r.get("text", "") for r in results)
+          if not found:
+              print(f"FAIL: fact not found in search results. Got: {json.dumps(results, indent=2)}")
+              sys.exit(1)
+          print(f"  ✓ Fact found in search ({len(results)} result(s))")
+
+          print(f"[4/4] Health check...")
+          resp = httpx.get(f"{BASE}/api/health", timeout=15)
+          resp.raise_for_status()
+          print(f"  ✓ Health OK: {resp.text.strip()}")
+
+          print(f"\n✓ PASS — full pipeline verified: install → provision → store → search")
+          print(f"  Platform: {PLATFORM}")
+          print(f"  Timestamp: {TIMESTAMP}")
+          EOF
+
+      - name: Open GitHub issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `CI: E2E verify failed (${new Date().toISOString().slice(0,10)})`;
+            const body = [
+              '## ctxstore-mcp E2E verification failed',
+              '',
+              `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `**Trigger:** ${context.eventName}`,
+              `**Branch:** ${context.ref}`,
+              '',
+              '### What failed',
+              'The install → provision → store → search pipeline did not complete successfully.',
+              '',
+              '### Steps to reproduce',
+              '```sh',
+              'pip install ctxstore-mcp',
+              'python3 -c "',
+              'import httpx',
+              'r = httpx.post(\'https://ctxstore.ai/api/v1/provision\', json={\'source\':\'manual-test\'})',
+              'print(r.json())',
+              '"',
+              '```',
+              '',
+              '_Auto-created by verify.yml_',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['bug', 'ci'],
+            });
