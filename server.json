@@ -1,0 +1,70 @@
+{
+  "$schema": "https://registry.modelcontextprotocol.io/schema/v0/server.json",
+  "name": "io.github.ctxstore-ai/ctxstore-mcp",
+  "description": "Persistent AI memory via MCP. Give your AI agent long-term memory across sessions — semantic search over conversations, facts, and decisions. Free, no signup required.",
+  "homepage": "https://ctxstore.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ctxstore-ai/ctxstore-mcp"
+  },
+  "license": "MIT",
+  "categories": ["memory", "productivity", "ai"],
+  "tags": ["memory", "context", "vector", "semantic-search", "persistent", "ai", "llm"],
+  "installations": {
+    "npm": {
+      "type": "npm",
+      "package": "ctxstore-mcp",
+      "command": "npx",
+      "args": ["ctxstore-mcp"],
+      "env": {
+        "TENANT_API_KEY": {
+          "description": "Your ctxstore.ai API key. Auto-provisioned on first run — leave blank to get a free key automatically.",
+          "required": false
+        }
+      }
+    },
+    "pip": {
+      "type": "pip",
+      "package": "ctxstore-mcp",
+      "command": "ctxstore-mcp",
+      "env": {
+        "TENANT_API_KEY": {
+          "description": "Your ctxstore.ai API key. Auto-provisioned on first run — leave blank to get a free key automatically.",
+          "required": false
+        }
+      }
+    },
+    "docker": {
+      "type": "docker",
+      "image": "ctxstore/mcp",
+      "env": {
+        "TENANT_API_KEY": {
+          "description": "Your ctxstore.ai API key.",
+          "required": true
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "search_context",
+      "description": "Search memory — all ingested conversations and sessions. Returns semantically relevant context with temporal weighting."
+    },
+    {
+      "name": "search_facts",
+      "description": "Search extracted facts, preferences, and decisions by category."
+    },
+    {
+      "name": "store_fact",
+      "description": "Store a new fact for permanent retention across sessions."
+    },
+    {
+      "name": "delete_fact",
+      "description": "Delete a stored fact by its ID."
+    },
+    {
+      "name": "get_stats",
+      "description": "Get statistics about your context store — total vectors, collection sizes, usage vs plan limits."
+    }
+  ]
+}
