@@ -1,12 +1,12 @@
 [project]
 name = "ctxstore-mcp"
-version = "1.0.0"
+version = "1.1.2"
 description = "Persistent AI memory via MCP. Give your AI agent long-term memory in 30 seconds."
 readme = "README.md"
-license = "MIT"
 requires-python = ">=3.10"
+license = "MIT"
 authors = [
-    {name = "ctxstore.ai", email = "hello@ctxstore.ai"},
+    {name = "ctxstore.ai", email = "emily@ctxstore.ai"},
 ]
 keywords = ["mcp", "ai", "memory", "context", "vector", "llm", "claude", "cursor"]
 classifiers = [
@@ -16,11 +16,13 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0",
     "httpx>=0.25.0",
 ]
 
@@ -31,8 +33,8 @@ ctxstore-setup = "ctxstore_mcp.setup_cli:main"
 [project.urls]
 Homepage = "https://ctxstore.ai"
 Documentation = "https://ctxstore.ai/docs"
-Repository = "https://github.com/ctxstore-ai/ctxstore-mcp"
-"Bug Tracker" = "https://github.com/ctxstore-ai/ctxstore-mcp/issues"
+Repository = "https://github.com/ctxstore/ctxstore-mcp"
+"Bug Tracker" = "https://github.com/ctxstore/ctxstore-mcp/issues"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
