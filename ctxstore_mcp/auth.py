@@ -1,120 +1,86 @@
 """
-ctxstore credential management — auto-provisioning and credential caching.
+Credential resolution and caching for ctxstore-mcp.
 
-Flow:
-  1. Check TENANT_API_KEY env var (always wins)
-  2. Check ~/.ctxstore/credentials.json
-  3. POST /api/v1/provision to get a free key, save it
+Precedence: TENANT_API_KEY env var, then ~/.ctxstore/credentials.json. With
+neither, the server starts in setup mode and the setup_account tool walks the
+user through the email-code flow (anonymous provisioning is retired).
 """
 
 import json
-import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
-import httpx
+UTC = timezone.utc  # noqa: UP017 — datetime.UTC is 3.11+, this package supports 3.10
 
-logger = logging.getLogger("ctxstore.auth")
-
-CREDENTIALS_FILE = Path.home() / ".ctxstore" / "credentials.json"
-CTXSTORE_URL = os.getenv("CTXSTORE_URL", "https://ctxstore.ai").rstrip("/")
-PROVISION_URL = f"{CTXSTORE_URL}/api/v1/provision"
+CREDENTIALS_PATH = Path.home() / ".ctxstore" / "credentials.json"
 
 
-def load_credentials() -> Optional[dict]:
-    """Load saved credentials from disk. Returns None if not found or invalid."""
-    if not CREDENTIALS_FILE.exists():
-        return None
-    try:
-        with open(CREDENTIALS_FILE) as f:
-            data = json.load(f)
-        if data.get("api_key"):
-            return data
-    except (json.JSONDecodeError, OSError):
-        pass
+def load_credentials() -> dict | None:
+    """Load credentials from ~/.ctxstore/credentials.json. Returns None if not found."""
+    if CREDENTIALS_PATH.exists():
+        try:
+            return json.loads(CREDENTIALS_PATH.read_text())
+        except Exception:
+            return None
     return None
 
 
-def save_credentials(api_key: str, tenant_id: str = "") -> None:
-    """Save credentials to ~/.ctxstore/credentials.json with 600 permissions."""
-    CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        "api_key": api_key,
-        "tenant_id": tenant_id,
-        "provisioned_at": datetime.now(timezone.utc).isoformat(),
-    }
-    with open(CREDENTIALS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    CREDENTIALS_FILE.chmod(0o600)
+def save_credentials(api_key: str, tenant_id: str) -> None:
+    """Save credentials to ~/.ctxstore/credentials.json."""
+    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CREDENTIALS_PATH.write_text(
+        json.dumps(
+            {
+                "api_key": api_key,
+                "tenant_id": tenant_id,
+                "provisioned_at": datetime.now(UTC).isoformat(),
+            },
+            indent=2,
+        )
+    )
+    # Restrict to owner read/write only
+    CREDENTIALS_PATH.chmod(0o600)
 
 
-def provision() -> str:
-    """
-    Call the ctxstore.ai provision endpoint to get a free API key.
-    Saves credentials to disk and prints a friendly first-run message.
-    Returns the api_key string.
+def provision_api_key() -> str:
+    """Anonymous provisioning was retired (the endpoint answers 410 Gone).
+
+    A key now comes from the email code flow: inside any MCP client call the
+    ``setup_account`` tool with mode='link_or_create' and your email, then
+    mode='verify' with the six-digit code; the key is saved for you. Or sign
+    in at https://ctxstore.ai. This function only explains that and returns
+    an empty key so the server can start in setup mode.
     """
     print(
-        "\n✦ ctxstore.ai: provisioning your free memory account...",
+        "\n[ctxstore] No API key yet. Start the server anyway and, in your client, call\n"
+        "[ctxstore]   setup_account(mode='link_or_create', email='you@example.com')\n"
+        "[ctxstore] then setup_account(mode='verify', email=..., code='123456') with the emailed code.\n"
+        "[ctxstore] Or sign in at https://ctxstore.ai and set TENANT_API_KEY. Never paste a key into chat.\n",
         file=sys.stderr,
     )
-    try:
-        resp = httpx.post(
-            PROVISION_URL,
-            json={"source": "ctxstore-mcp"},
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except httpx.HTTPError as e:
-        raise RuntimeError(
-            f"Could not provision ctxstore.ai account: {e}\n"
-            f"Set TENANT_API_KEY manually or visit {CTXSTORE_URL}"
-        ) from e
-
-    api_key = data.get("api_key", "")
-    tenant_id = data.get("tenant_id", "")
-
-    if not api_key:
-        raise RuntimeError(
-            f"Provisioning response missing api_key. "
-            f"Visit {CTXSTORE_URL} to get your key."
-        )
-
-    save_credentials(api_key, tenant_id)
-    print(
-        f"✓ ctxstore.ai: account provisioned! Key saved to {CREDENTIALS_FILE}",
-        file=sys.stderr,
-    )
-    return api_key
+    return ""
 
 
-def get_or_provision() -> str:
+def resolve_api_key() -> str:
     """
-    Return the API key, auto-provisioning if needed.
-
-    Priority:
+    Resolve the API key using this precedence:
       1. TENANT_API_KEY environment variable
       2. ~/.ctxstore/credentials.json
-      3. Auto-provision via ctxstore.ai (free, no signup)
+      3. No key: explain the email-code flow and return "" (setup mode)
+
+    Returns the key string, or empty string when no key exists yet.
     """
-    # 1. Env var always wins
+    # 1. Env var wins
     env_key = os.getenv("TENANT_API_KEY", "").strip()
     if env_key:
         return env_key
 
-    # 2. Saved credentials
+    # 2. Cached credentials
     creds = load_credentials()
-    if creds:
+    if creds and creds.get("api_key"):
         return creds["api_key"]
 
-    # 3. Auto-provision
-    return provision()
-
-
-# Alias for server.py import
-resolve_api_key = get_or_provision
+    # 3. No key yet — setup mode
+    return provision_api_key()
