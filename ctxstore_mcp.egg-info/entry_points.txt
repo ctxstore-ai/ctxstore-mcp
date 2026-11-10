@@ -1,3 +1,0 @@
-[console_scripts]
-ctxstore-mcp = ctxstore_mcp:main
-ctxstore-setup = ctxstore_mcp.setup_cli:main
