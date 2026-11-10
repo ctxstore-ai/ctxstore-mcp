@@ -1,0 +1,209 @@
+Metadata-Version: 2.4
+Name: ctxstore-mcp
+Version: 1.2.0
+Summary: Persistent AI memory via MCP. Give your AI agent long-term memory in 30 seconds.
+Author-email: "ctxstore.ai" <emily@ctxstore.ai>
+License-Expression: MIT
+Project-URL: Homepage, https://ctxstore.ai
+Project-URL: Documentation, https://ctxstore.ai/docs
+Project-URL: Repository, https://github.com/ctxstore-ai/ctxstore-mcp
+Project-URL: Bug Tracker, https://github.com/ctxstore-ai/ctxstore-mcp/issues
+Keywords: mcp,ai,memory,context,vector,llm,claude,cursor
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Typing :: Typed
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: mcp<3,>=1.23.0
+Requires-Dist: httpx>=0.25.0
+Dynamic: license-file
+
+# ctxstore-mcp
+
+Persistent memory for AI agents, over stdio. `ctxstore-mcp` is the stdio
+edition of [ctxstore.ai](https://ctxstore.ai): a small local MCP server that
+bridges to the hosted server at `https://mcp.ctxstore.ai/mcp`, so a client that
+only speaks stdio gets the same tools as one that connects over HTTP,
+`setup_account` and `bind_agent` included.
+
+If your client supports remote (HTTP) MCP servers, connect to
+`https://mcp.ctxstore.ai/mcp` directly and skip this package. Per-client
+instructions: <https://ctxstore.ai/for-agents#clients>.
+
+## Run it
+
+```bash
+uvx ctxstore-mcp
+```
+
+Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/). `pip install
+ctxstore-mcp` and then `ctxstore-mcp` works too. Works with the `mcp` SDK 1.23+
+and 2.x.
+
+## The key: `TENANT_API_KEY`
+
+The server reads your API key (it starts with `emk_`) from the environment
+variable **`TENANT_API_KEY`**. Lookup order:
+
+1. `TENANT_API_KEY` in the environment
+2. `~/.ctxstore/credentials.json` (`{"api_key": "emk_..."}`)
+3. Neither: the server starts **keyless**
+
+Keyless is a normal first run. `tools/list` still answers, and the agent signs
+the person up or in with the email code flow:
+
+1. `setup_account(mode='link_or_create', email='you@example.com')`. A six-digit
+   code goes to that inbox.
+2. The person reads the code out of their own email.
+3. `setup_account(mode='verify', email='you@example.com', code='123456')`.
+
+The server uses the new key for the rest of the process. To keep it across
+restarts, put it in `TENANT_API_KEY` in the client config. Never paste a key
+into a chat.
+
+## Client config
+
+### Claude Desktop, Cursor, Windsurf, and other `mcpServers` JSON clients
+
+```json
+{
+  "mcpServers": {
+    "ctxstore": {
+      "command": "uvx",
+      "args": ["ctxstore-mcp"],
+      "env": { "TENANT_API_KEY": "emk_your_key_here" }
+    }
+  }
+}
+```
+
+No key yet? Drop the `env` block and ask the agent to call `setup_account`.
+
+### Claude Code
+
+Claude Code speaks HTTP, so it needs no install. Add the hosted server at
+**project scope** (it lands in `./.mcp.json`, so one project's setup never
+changes another's) and sign in with `setup_account` on first use:
+
+```bash
+claude mcp add --transport http --scope project ctxstore https://mcp.ctxstore.ai/mcp
+```
+
+Use `--scope user` instead if you want it in every project. The stdio edition
+works too, if you prefer it:
+
+```bash
+claude mcp add --scope project ctxstore -e TENANT_API_KEY=emk_your_key_here -- uvx ctxstore-mcp
+```
+
+### Codex CLI
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.ctxstore]
+command = "uvx"
+args = ["ctxstore-mcp"]
+env = { TENANT_API_KEY = "emk_your_key_here" }
+```
+
+## `ctxstore-setup`
+
+`ctxstore-setup` looks for the clients installed on this machine and prints the
+exact entry each one needs. It changes nothing by default:
+
+```bash
+uvx --from ctxstore-mcp ctxstore-setup           # show
+uvx --from ctxstore-mcp ctxstore-setup --write   # write the entries it showed
+```
+
+Claude Code, Cursor, VS Code and Windsurf get the hosted HTTP server with no
+key in the file. Claude Desktop gets `uvx ctxstore-mcp`, with your saved key in
+its env only if `~/.ctxstore/credentials.json` already holds one. Claude Code
+is written at project scope (`./.mcp.json` in the current directory, or
+`--dir`); pass `--global` for `~/.claude.json`. `--client cursor` limits it to
+one client. Versions before 1.2.0 wrote every client's global config without
+asking; that is gone.
+
+## First steps for the agent
+
+Once connected, the agent should:
+
+1. `setup_account` if there is no key yet (above).
+2. `bind_agent(agent_id='<a name>')` if the person wants the agent to keep a
+   stable identity across sessions.
+3. `wake_status()` or `load_context()` to read what it already remembers.
+4. `store_fact` decisions and learnings as they happen; close with
+   `store_session_summary`.
+
+The full manual for agents is <https://ctxstore.ai/llms-full.txt>.
+
+## Environment variables
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TENANT_API_KEY` | unset (keyless) | Your `emk_` API key |
+| `CTXSTORE_MCP_URL` | `https://mcp.ctxstore.ai/mcp` | Hosted MCP endpoint the bridge forwards to |
+| `CTXSTORE_URL` | `https://ctxstore.ai` | REST base URL, used by the offline fallback |
+| `CTXSTORE_STDIO_MODE` | `bridge` | `rest` skips the hosted MCP endpoint and serves the local REST tool set only |
+
+## How it works
+
+On `tools/list` and `tools/call` the server opens one streamable-HTTP session
+to `CTXSTORE_MCP_URL`, sends your key as `Authorization: Bearer`, and passes
+the hosted tool list and every call through unchanged. The session lives as
+long as the process, so `bind_agent` and workspace switches stick.
+
+If the hosted MCP endpoint cannot be reached, the server falls back to a
+smaller built-in tool set backed by the REST API (`search_context`,
+`search_facts`, `store_fact`, `delete_fact`, `move_fact`, `get_stats`,
+`store_session_summary`, `resume_session`, `get_session_seed`, `load_context`,
+`ghost_mode`, `get_fact_history`, `setup_account`). Session tools such as
+`bind_agent` need the hosted server and say so when it is down.
+
+## Troubleshooting
+
+- **`pip install ctxstore-mcp` gave you 1.0.0 and it exits with "410 Gone"**:
+  1.0.0 provisioned anonymous accounts, which the service retired. Upgrade
+  (`uvx ctxstore-mcp@latest`, or `pip install -U ctxstore-mcp`) and sign in
+  with `setup_account`.
+
+- **`AttributeError: 'Server' object has no attribute 'list_tools'`**: you have
+  ctxstore-mcp 1.0.0, which predates mcp 2.x. Upgrade: `uvx ctxstore-mcp@latest`.
+- **"Authentication required"** on a tool call: no key, or the key was
+  rotated. Run the `setup_account` flow above.
+- **Only a dozen tools listed**: the hosted endpoint was unreachable at
+  startup, so the REST fallback is serving. Check network access to
+  `mcp.ctxstore.ai`.
+
+## Cline
+
+Cline speaks HTTP, so it needs no install. Add this to
+`cline_mcp_settings.json` (MCP Servers, then Configure MCP Servers):
+
+```json
+{
+  "mcpServers": {
+    "ctxstore": {
+      "type": "streamableHttp",
+      "url": "https://mcp.ctxstore.ai/mcp",
+      "headers": { "Authorization": "Bearer emk_your_key_here" },
+      "disabled": false
+    }
+  }
+}
+```
+
+Step by step for agents: [llms-install.md](llms-install.md).
+
+## License
+
+MIT. Source: <https://github.com/ctxstore-ai/ctxstore-mcp>. Issues:
+<https://github.com/ctxstore-ai/ctxstore-mcp/issues>.
